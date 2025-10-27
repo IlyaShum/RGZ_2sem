@@ -1,68 +1,145 @@
-//
-// Created by Shumskiy Ilya on 12.05.2025
-//
 #include "atbash.h"
 #include <iostream>
 #include <string>
 #include <fstream>
-#include <locale>
-#include <codecvt>
+#include <sstream>
 
 using namespace std;
 
-// Функция для корректного отображения русских символов
 void initConsole() {
-    setlocale(LC_ALL, "ru_RU.utf8");
-    #ifdef _WIN32
-    system("chcp 65001 > nul");
-    #endif
+    setlocale(LC_ALL, "ru_RU.UTF-8");
+}
+
+// Русский алфавит в UTF-8 (байтовое представление)
+const string rusUpper = "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ";
+const string rusLower = "абвгдеёжзийклмнопрстуфхцчшщъыьэюя";
+const string engUpper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const string engLower = "abcdefghijklmnopqrstuvwxyz";
+
+// Функция для чтения файла
+string readFile(const string& filename) {
+    ifstream file(filename);
+    if (!file.is_open()) {
+        throw runtime_error("Ошибка: не удалось открыть файл " + filename);
+    }
+    
+    stringstream buffer;
+    buffer << file.rdbuf();
+    string content = buffer.str();
+    file.close();
+    
+    if (content.empty()) {
+        throw runtime_error("Ошибка: файл " + filename + " пустой");
+    }
+    
+    return content;
+}
+
+// Функция для поиска UTF-8 символа в строке
+size_t findUtf8Char(const string& str, const string& targetChar, size_t startPos = 0) {
+    if (targetChar.empty()) return string::npos;
+    
+    for (size_t i = startPos; i < str.length(); ) {
+        // Определяем длину текущего символа UTF-8
+        unsigned char firstByte = str[i];
+        size_t charLen = 1;
+        if ((firstByte & 0xE0) == 0xC0) charLen = 2;
+        else if ((firstByte & 0xF0) == 0xE0) charLen = 3;
+        else if ((firstByte & 0xF8) == 0xF0) charLen = 4;
+        
+        if (i + charLen <= str.length()) {
+            string currentChar = str.substr(i, charLen);
+            if (currentChar == targetChar) {
+                return i;
+            }
+        }
+        i += charLen;
+    }
+    return string::npos;
+}
+
+// Функция для получения символа по индексу в UTF-8 строке
+string getUtf8CharAt(const string& str, size_t index) {
+    if (index >= str.length()) return "";
+    
+    unsigned char firstByte = str[index];
+    size_t charLen = 1;
+    if ((firstByte & 0xE0) == 0xC0) charLen = 2;
+    else if ((firstByte & 0xF0) == 0xE0) charLen = 3;
+    else if ((firstByte & 0xF8) == 0xF0) charLen = 4;
+    
+    if (index + charLen <= str.length()) {
+        return str.substr(index, charLen);
+    }
+    return "";
+}
+
+// Функция для получения длины UTF-8 строки в символах
+size_t utf8Length(const string& str) {
+    size_t len = 0;
+    for (size_t i = 0; i < str.length(); ) {
+        unsigned char firstByte = str[i];
+        if ((firstByte & 0x80) == 0) i += 1;
+        else if ((firstByte & 0xE0) == 0xC0) i += 2;
+        else if ((firstByte & 0xF0) == 0xE0) i += 3;
+        else if ((firstByte & 0xF8) == 0xF0) i += 4;
+        else i += 1;
+        len++;
+    }
+    return len;
 }
 
 string atbashTransform(const string& text, bool isRussian) {
-    // Полные алфавиты с правильным порядком букв
-    const wstring rusUpper = L"АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ";
-    const wstring rusLower = L"абвгдеёжзийклмнопрстуфхцчшщъыьэюя";
-    const string engUpper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    const string engLower = "abcdefghijklmnopqrstuvwxyz";
-
-    // Конвертируем входную строку в wide string для корректной обработки русских символов
-    wstring_convert<codecvt_utf8_utf16<wchar_t>> converter;
-    wstring wtext = converter.from_bytes(text);
-
-    wstring result;
-
-    for (wchar_t c : wtext) {
-        if (isRussian) {
-            if (iswupper(c)) {
-                size_t pos = rusUpper.find(c);
-                if (pos != wstring::npos) {
-                    wchar_t mirrored = rusUpper[rusUpper.length() - 1 - pos];
-                    result += mirrored;
-                } else {
-                    result += c;
+    string result;
+    
+    if (isRussian) {
+        // Обработка русского текста
+        for (size_t i = 0; i < text.length(); ) {
+            string currentChar = getUtf8CharAt(text, i);
+            
+            if (!currentChar.empty()) {
+                // Проверяем в верхнем регистре
+                size_t pos = findUtf8Char(rusUpper, currentChar);
+                if (pos != string::npos) {
+                    size_t alphabetLen = utf8Length(rusUpper);
+                    size_t mirrorPos = (alphabetLen - 1) - (pos / 2);
+                    string mirroredChar = getUtf8CharAt(rusUpper, mirrorPos * 2);
+                    result += mirroredChar;
+                } 
+                // Проверяем в нижнем регистре
+                else {
+                    pos = findUtf8Char(rusLower, currentChar);
+                    if (pos != string::npos) {
+                        size_t alphabetLen = utf8Length(rusLower);
+                        size_t mirrorPos = (alphabetLen - 1) - (pos / 2);
+                        string mirroredChar = getUtf8CharAt(rusLower, mirrorPos * 2);
+                        result += mirroredChar;
+                    } 
+                    // Если не буква - оставляем как есть
+                    else {
+                        result += currentChar;
+                    }
                 }
+                
+                i += currentChar.length();
             } else {
-                size_t pos = rusLower.find(c);
-                if (pos != wstring::npos) {
-                    wchar_t mirrored = rusLower[rusLower.length() - 1 - pos];
-                    result += mirrored;
-                } else {
-                    result += c;
-                }
+                i++;
             }
-        } else {
-            if (iswupper(c)) {
+        }
+    } else {
+        // Обработка английского текста
+        for (char c : text) {
+            if (c >= 'A' && c <= 'Z') {
                 result += 'Z' - (c - 'A');
-            } else if (iswlower(c)) {
+            } else if (c >= 'a' && c <= 'z') {
                 result += 'z' - (c - 'a');
             } else {
                 result += c;
             }
         }
     }
-
-    // Конвертируем результат обратно в UTF-8
-    return converter.to_bytes(result);
+    
+    return result;
 }
 
 void writeToFile(const string& filename, const string& content) {
@@ -93,15 +170,26 @@ void runAtbash() {
     if (languageChoice == 3){
         return;
     }
-    cout << "Введите сообщение: ";
-    string message;
-    getline(cin, message);
+    
+    cout << "Введите имя файла с текстом: ";
+string filename;
+getline(cin, filename);
+
+string message;
+try {
+    message = readFile(filename);
+    cout << "Текст для шифрования: " << message << endl;
+} catch (const exception& e) {
+    cerr << e.what() << endl;
+    cout << "Возврат в главное меню.\n";
+    return;  // Возвращаемся в главное меню
+}
 
     string encrypted = atbashTransform(message, isRussian);
-    cout << "Зашифрованное: " << encrypted << endl;
-    writeToFile("encryptedATBASH.txt", encrypted);
+    cout << "Зашифрованный текст: " << encrypted << endl;
+    writeToFile("encryptedAtbash.txt", encrypted);
 
     string decrypted = atbashTransform(encrypted, isRussian);
-    cout << "Расшифрованное: " << decrypted << endl;
-    writeToFile("decryptedATBASH.txt", decrypted);
+    cout << "Расшифрованный текст: " << decrypted << endl;
+    writeToFile("decryptedAtbash.txt", decrypted);
 }
